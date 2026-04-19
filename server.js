@@ -1,6 +1,5 @@
 const express = require("express");
 const dotenv = require("dotenv");
-dotenv.config({ path: "./config/config.env" });
 const cookieParser = require("cookie-parser");
 const connectDB = require("./config/db");
 const mongoSanitize = require("@exortek/express-mongo-sanitize");
@@ -61,14 +60,12 @@ const providers = require("./routes/providers");
 const auth = require("./routes/auth");
 const rentals = require("./routes/rentals");
 const cars = require("./routes/cars");
-const notifications = require("./routes/notifications");
 
 //Mount routers
 app.use("/api/providers", providers);
 app.use("/api/auth", auth);
 app.use("/api/rentals", rentals);
 app.use("/api/cars", cars);
-app.use("/api/notifications", notifications);
 
 const PORT = process.env.PORT || 5000;
 

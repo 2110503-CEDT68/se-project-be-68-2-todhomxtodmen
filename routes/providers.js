@@ -5,7 +5,6 @@ const {
   createProvider,
   updateProvider,
   deleteProvider,
-  getProviderDetail,
 } = require("../controllers/providers"); // providers
 
 const rentalRouter = require("./rentals"); // (Rentals) or rentals
@@ -27,7 +26,5 @@ router //คล้ายๆเดิม
   .get(getProvider)
   .put(protect, authorize("admin"), updateProvider) // Admin
   .delete(protect, authorize("admin"), deleteProvider); // Admin
-
-router.get("/:id/detail", getProviderDetail);
 
 module.exports = router;

@@ -2,78 +2,55 @@ const Rental = require("../models/Rental");
 const Provider = require("../models/Provider");
 const Car = require("../models/Car");
 
-const CAR_SELECT =
+const carSelect =
   "brand model year color licensePlate dailyRate available image";
 
-// ---------- shared helpers ----------
-
-function populatedRentalQuery(query) {
-  return query
-    .populate({ path: "provider", select: "name address telephone" })
-    .populate({ path: "user", select: "name email telephone" })
-    .populate({ path: "car", select: CAR_SELECT });
-}
-
-async function getRentalOrFail(id, res) {
-  const rental = await Rental.findById(id);
-  if (!rental) {
-    res.status(404).json({
-      success: false,
-      message: `No rental with the id of ${id}`,
-    });
-    return null;
-  }
-  return rental;
-}
-
-function isOwnerOrAdmin(rental, user) {
-  return rental.user.toString() === user.id || user.role === "admin";
-}
-
-function calcTotalAmount(car, rentalDate, returnDate) {
-  const days = Math.max(
-    1,
-    Math.ceil((new Date(returnDate) - new Date(rentalDate)) / 86_400_000)
-  );
-  return car.dailyRate * days;
-}
-
-// ---------- exported helpers (used by payments controller) ----------
-
-exports.populatedRentalQuery = populatedRentalQuery;
-exports.getRentalOrFail = getRentalOrFail;
-exports.isOwnerOrAdmin = isOwnerOrAdmin;
-
-// ---------- controllers ----------
-
-//@desc  Get all rentals (admin sees all, user sees own)
+//@desc Get all rentals
 //@route GET /api/rentals
 //@access Private
-exports.getRentals = async (req, res) => {
-  try {
-    let baseQuery;
-    if (req.user.role !== "admin") {
-      baseQuery = Rental.find({ user: req.user.id });
-    } else if (req.params.providerId) {
-      baseQuery = Rental.find({ provider: req.params.providerId });
+exports.getRentals = async (req, res, next) => {
+  let query;
+  if (req.user.role !== "admin") {
+    query = Rental.find({ user: req.user.id })
+      .populate({ path: "provider", select: "name address telephone" })
+      .populate({ path: "user", select: "name email telephone" })
+      .populate({ path: "car", select: carSelect });
+  } else {
+    if (req.params.providerId) {
+      query = Rental.find({ provider: req.params.providerId })
+        .populate({ path: "provider", select: "name address telephone" })
+        .populate({ path: "user", select: "name email telephone" })
+        .populate({ path: "car", select: carSelect });
     } else {
-      baseQuery = Rental.find();
+      query = Rental.find()
+        .populate({ path: "provider", select: "name address telephone" })
+        .populate({ path: "user", select: "name email telephone" })
+        .populate({ path: "car", select: carSelect });
     }
-
-    const rentals = await populatedRentalQuery(baseQuery);
-    res.status(200).json({ success: true, count: rentals.length, data: rentals });
+  }
+  try {
+    const rentals = await query;
+    res
+      .status(200)
+      .json({ success: true, count: rentals.length, data: rentals });
   } catch (err) {
-    console.error(err.stack);
-    res.status(500).json({ success: false, message: "Cannot find rentals" });
+    console.log(err.stack);
+    return res
+      .status(500)
+      .json({ success: false, message: "Cannot find rental" });
   }
 };
 
-//@desc  Get single rental
+//@desc Get single rental
 //@route GET /api/rentals/:id
 //@access Private
-exports.getRental = async (req, res) => {
+exports.getRental = async (req, res, next) => {
   try {
-    const rental = await populatedRentalQuery(Rental.findById(req.params.id));
+    const rental = await Rental.findById(req.params.id)
+      .populate({ path: "provider", select: "name address telephone" })
+      .populate({ path: "user", select: "name email telephone" })
+      .populate({ path: "car", select: carSelect });
+
     if (!rental) {
       return res.status(404).json({
         success: false,
@@ -81,16 +58,18 @@ exports.getRental = async (req, res) => {
       });
     }
     res.status(200).json({ success: true, data: rental });
-  } catch (err) {
-    console.error(err.stack);
-    res.status(500).json({ success: false, message: "Cannot find rental" });
+  } catch (error) {
+    console.log(error.stack);
+    return res
+      .status(500)
+      .json({ success: false, message: "Cannot find Rental" });
   }
 };
 
-//@desc  Add rental — calculates totalAmount automatically
+//@desc Add rental
 //@route POST /api/rentals
 //@access Private
-exports.addRental = async (req, res) => {
+exports.addRental = async (req, res, next) => {
   try {
     const provider = await Provider.findById(req.body.provider);
     if (!provider) {
@@ -100,6 +79,7 @@ exports.addRental = async (req, res) => {
       });
     }
 
+    // Check if car exists and belongs to the provider
     const car = await Car.findById(req.body.car);
     if (!car) {
       return res.status(404).json({
@@ -110,16 +90,18 @@ exports.addRental = async (req, res) => {
     if (car.provider.toString() !== req.body.provider) {
       return res.status(400).json({
         success: false,
-        message: "Car does not belong to this provider",
-      });
-    }
-    if (!car.available) {
-      return res.status(400).json({
-        success: false,
-        message: "This car is currently unavailable",
+        message: `Car does not belong to this provider`,
       });
     }
 
+    // Check car is not manually set unavailable by admin
+    if (!car.available) {
+      return res
+        .status(400)
+        .json({ success: false, message: "This car is currently unavailable" });
+    }
+
+    // Validate dates
     const pickupDate = new Date(req.body.rentalDate);
     const returnDate = new Date(req.body.returnDate);
 
@@ -130,61 +112,61 @@ exports.addRental = async (req, res) => {
       });
     }
 
+    // Check for overlapping rentals on the same car
     const overlapping = await Rental.findOne({
       car: req.body.car,
-      paymentStatus: { $ne: "refunded" },
       rentalDate: { $lt: returnDate },
       returnDate: { $gt: pickupDate },
     });
+
     if (overlapping) {
       return res.status(400).json({
         success: false,
-        message: `This car is already booked from ${
-          overlapping.rentalDate.toISOString().split("T")[0]
-        } to ${overlapping.returnDate.toISOString().split("T")[0]}`,
+        message: `This car is already booked from ${overlapping.rentalDate.toISOString().split("T")[0]} to ${overlapping.returnDate.toISOString().split("T")[0]}`,
       });
     }
 
-    if (req.user.role !== "admin") {
-      const existingCount = await Rental.countDocuments({ user: req.user.id });
-      if (existingCount >= 3) {
-        return res.status(400).json({
-          success: false,
-          message: "You have already made 3 rentals",
-        });
-      }
+    // Add user ID
+    req.body.user = req.user.id;
+
+    // Check max 3 rentals for non-admin
+    const existedRentals = await Rental.find({ user: req.user.id });
+    if (existedRentals.length >= 3 && req.user.role !== "admin") {
+      return res
+        .status(400)
+        .json({ success: false, message: `You have already made 3 rentals` });
     }
 
-    const totalAmount = calcTotalAmount(car, pickupDate, returnDate);
-
-    const rental = await Rental.create({
-      ...req.body,
-      user: req.user.id,
-      totalAmount,
-    });
-
+    const rental = await Rental.create(req.body);
     res.status(200).json({ success: true, data: rental });
-  } catch (err) {
-    console.error(err.stack);
-    res.status(500).json({ success: false, message: "Cannot create rental" });
+  } catch (error) {
+    console.log(error.stack);
+    return res
+      .status(500)
+      .json({ success: false, message: "Cannot create rental" });
   }
 };
 
-//@desc  Update rental dates
+//@desc Update rental
 //@route PUT /api/rentals/:id
 //@access Private
-exports.updateRental = async (req, res) => {
+exports.updateRental = async (req, res, next) => {
   try {
-    let rental = await getRentalOrFail(req.params.id, res);
-    if (!rental) return;
-
-    if (!isOwnerOrAdmin(rental, req.user)) {
+    let rental = await Rental.findById(req.params.id);
+    if (!rental) {
+      return res.status(404).json({
+        success: false,
+        message: `No rental with id ${req.params.id}`,
+      });
+    }
+    if (rental.user.toString() !== req.user.id && req.user.role !== "admin") {
       return res.status(401).json({
         success: false,
-        message: "Not authorized to update this rental",
+        message: `Not authorized to update this rental`,
       });
     }
 
+    // If dates are being updated, validate and check overlap
     if (req.body.rentalDate || req.body.returnDate) {
       const pickupDate = new Date(req.body.rentalDate || rental.rentalDate);
       const returnDate = new Date(req.body.returnDate || rental.returnDate);
@@ -199,22 +181,15 @@ exports.updateRental = async (req, res) => {
       const overlapping = await Rental.findOne({
         car: rental.car,
         _id: { $ne: rental._id },
-        paymentStatus: { $ne: "refunded" },
         rentalDate: { $lt: returnDate },
         returnDate: { $gt: pickupDate },
       });
+
       if (overlapping) {
         return res.status(400).json({
           success: false,
-          message: `Car is booked from ${
-            overlapping.rentalDate.toISOString().split("T")[0]
-          } to ${overlapping.returnDate.toISOString().split("T")[0]}`,
+          message: `Car is booked from ${overlapping.rentalDate.toISOString().split("T")[0]} to ${overlapping.returnDate.toISOString().split("T")[0]}`,
         });
-      }
-
-      if (rental.paymentStatus === "pending") {
-        const car = await Car.findById(rental.car);
-        req.body.totalAmount = calcTotalAmount(car, pickupDate, returnDate);
       }
     }
 
@@ -223,39 +198,46 @@ exports.updateRental = async (req, res) => {
       runValidators: true,
     });
     res.status(200).json({ success: true, data: rental });
-  } catch (err) {
-    console.error(err.stack);
-    res.status(500).json({ success: false, message: "Cannot update rental" });
+  } catch (error) {
+    console.log(error.stack);
+    return res
+      .status(500)
+      .json({ success: false, message: "Cannot update rental" });
   }
 };
 
-//@desc  Delete rental
+//@desc Delete rental
 //@route DELETE /api/rentals/:id
 //@access Private
-exports.deleteRental = async (req, res) => {
+exports.deleteRental = async (req, res, next) => {
   try {
-    const rental = await getRentalOrFail(req.params.id, res);
-    if (!rental) return;
-
-    if (!isOwnerOrAdmin(rental, req.user)) {
-      return res.status(401).json({
+    const rental = await Rental.findById(req.params.id);
+    if (!rental) {
+      return res.status(404).json({
         success: false,
-        message: "Not authorized to delete this rental",
+        message: `No rental with id ${req.params.id}`,
       });
     }
-
-    await rental.deleteOne();
+    if (rental.user.toString() !== req.user.id && req.user.role !== "admin") {
+      return res.status(401).json({
+        success: false,
+        message: `Not authorized to delete this rental`,
+      });
+    }
+    await rental.deleteOne({ _id: req.params.id });
     res.status(200).json({ success: true, data: {} });
-  } catch (err) {
-    console.error(err.stack);
-    res.status(500).json({ success: false, message: "Cannot delete rental" });
+  } catch (error) {
+    console.log(error.stack);
+    return res
+      .status(500)
+      .json({ success: false, message: "Cannot delete rental" });
   }
 };
 
-//@desc  Check car availability for date range
-//@route GET /api/cars/:id/availability
+//@desc Check car availability for date range
+//@route GET /api/cars/:id/availability?pickupDate=xxx&returnDate=xxx
 //@access Public
-exports.checkCarAvailability = async (req, res) => {
+exports.checkCarAvailability = async (req, res, next) => {
   try {
     const { pickupDate, returnDate } = req.query;
     if (!pickupDate || !returnDate) {
@@ -267,7 +249,6 @@ exports.checkCarAvailability = async (req, res) => {
 
     const overlapping = await Rental.find({
       car: req.params.id,
-      paymentStatus: { $ne: "refunded" },
       rentalDate: { $lt: new Date(returnDate) },
       returnDate: { $gt: new Date(pickupDate) },
     });
@@ -280,8 +261,10 @@ exports.checkCarAvailability = async (req, res) => {
         returnDate: r.returnDate,
       })),
     });
-  } catch (err) {
-    console.error(err.stack);
-    res.status(500).json({ success: false, message: "Error checking availability" });
+  } catch (error) {
+    console.log(error.stack);
+    return res
+      .status(500)
+      .json({ success: false, message: "Error checking availability" });
   }
 };
