@@ -24,9 +24,31 @@ const RentalSchema = new mongoose.Schema({
     ref: "Car",
     required: true,
   },
+  // --- Payment fields ---
+  totalAmount: {
+    type: Number,
+    default: 0,
+  },
+  paymentStatus: {
+    type: String,
+    enum: ["pending", "paid", "refunded"],
+    default: "pending",
+  },
+  refundStatus: {
+    type: String,
+    enum: ["none", "requested", "completed"],
+    default: "none",
+  },
+  paidAt: {
+    type: Date,
+  },
+  cancelledAt: {
+    type: Date,
+  },
   createAt: {
     type: Date,
     default: Date.now,
   },
 });
+
 module.exports = mongoose.model("Rental", RentalSchema);
