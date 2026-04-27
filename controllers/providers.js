@@ -1,5 +1,6 @@
 const Provider = require("../models/Provider");
 const Rental = require("../models/Rental");
+const Review = require("../models/Review");
 const Car = require("../models/Car");
 //@desc Get all Providers
 //@route GET /api/v1/providers
@@ -15,7 +16,6 @@ exports.getProviders = async (req, res, next) => {
 
   //Loop over removeFields and delete them from reqQuery
   removeFields.forEach((param) => delete reqQuery[param]);
-  console.log(reqQuery);
 
   //Create query String
   let queryStr = JSON.stringify(reqQuery);
@@ -23,9 +23,7 @@ exports.getProviders = async (req, res, next) => {
     /\b(gt|gte|lt|lte|in)\b/g,
     (match) => `$${match}`,
   );
-  query = Provider.find(JSON.parse(queryStr))
-    .populate("rentals")
-    .populate("cars");
+  query = Provider.find(JSON.parse(queryStr)).populate("cars");
 
   //Select Fields
   if (req.query.select) {
@@ -48,7 +46,7 @@ exports.getProviders = async (req, res, next) => {
   const endIndex = page * limit;
   try {
     const total = await Provider.countDocuments();
-    query = query.skip(startIndex).limit(limit);
+    query = query.skip(startIndex).limit(limit).lean();
     //Execute Query
     const providers = await query;
 
@@ -80,7 +78,7 @@ exports.getProviders = async (req, res, next) => {
 //@access Public
 exports.getProvider = async (req, res, next) => {
   try {
-    const provider = await Provider.findById(req.params.id);
+    const provider = await Provider.findById(req.params.id).lean();
 
     if (!provider) {
       return res.status(400).json({ success: false });
@@ -97,13 +95,23 @@ exports.getProvider = async (req, res, next) => {
 //@access Public
 exports.getProviderDetail = async (req, res) => {
   try {
-    const [provider, cars, bookings] = await Promise.all([
-      Provider.findById(req.params.id),
-      Car.find({ provider: req.params.id }),
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const [provider, cars, bookings, reviews] = await Promise.all([
+      Provider.findById(req.params.id).lean(),
+      Car.find({ provider: req.params.id }).lean(),
       Rental.find({
         provider: req.params.id,
-        paymentStatus: { $ne: "refunded" },
-      }).select("car rentalDate returnDate"),
+        paymentStatus: { $in: ["pending", "paid"] },
+        returnDate: { $gte: startOfToday },
+      })
+        .select("car rentalDate returnDate")
+        .lean(),
+      Review.find({ provider: req.params.id })
+        .populate({ path: "user", select: "name" })
+        .sort({ createdAt: -1 })
+        .lean(),
     ]);
 
     if (!provider) {
@@ -114,7 +122,7 @@ exports.getProviderDetail = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: { provider, cars, bookings },
+      data: { provider, cars, bookings, reviews },
     });
   } catch (err) {
     console.error(err.stack);
@@ -128,8 +136,12 @@ exports.getProviderDetail = async (req, res) => {
 //@route POST /api/v1/providers
 //@access Private
 exports.createProvider = async (req, res, next) => {
-  const provider = await Provider.create(req.body);
-  res.status(201).json({ success: true, data: provider });
+  try {
+    const provider = await Provider.create(req.body);
+    res.status(201).json({ success: true, data: provider });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
 };
 
 //@desc Update single Providers
