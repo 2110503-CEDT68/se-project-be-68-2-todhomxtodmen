@@ -8,9 +8,11 @@ const helmet = require("helmet");
 const { xss } = require("express-xss-sanitizer");
 const hpp = require("hpp");
 const cors = require("cors");
+const swaggerJsdoc = require("swagger-jsdoc");
+const swaggerUi = require("swagger-ui-express");
 
-//Connect to database
-connectDB();
+// Eagerly start DB connection (non-blocking — middleware below ensures it's ready per request)
+connectDB().catch((err) => console.error("Initial DB connection error:", err));
 
 const app = express();
 
@@ -56,12 +58,44 @@ app.use(mongoSanitize());
 //Cookie parser
 app.use(cookieParser());
 
+// Ensure DB is connected before each request (handles concurrent cold-start races)
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    console.error("DB connection failed:", err.message);
+    res.status(503).json({ success: false, message: "Database unavailable" });
+  }
+});
+
+// ---------- Swagger ----------
+const swaggerSpec = swaggerJsdoc({
+  definition: {
+    openapi: "3.0.0",
+    info: { title: "GoGo Rental API", version: "1.0.0" },
+    components: {
+      securitySchemes: {
+        bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" },
+      },
+      schemas: require("./swagger.schemas"),
+    },
+  },
+  apis: ["./routes/*.js"],
+});
+
+app.get("/swagger.json", (req, res) => res.json(swaggerSpec));
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+// ---------- End Swagger ----------
+
 //Route files
 const providers = require("./routes/providers");
 const auth = require("./routes/auth");
 const rentals = require("./routes/rentals");
 const cars = require("./routes/cars");
 const notifications = require("./routes/notifications");
+const reviews = require("./routes/reviews");
+const reviewsAdmin = require("./routes/reviews-admin");
 
 //Mount routers
 app.use("/api/providers", providers);
@@ -69,6 +103,8 @@ app.use("/api/auth", auth);
 app.use("/api/rentals", rentals);
 app.use("/api/cars", cars);
 app.use("/api/notifications", notifications);
+app.use("/api/providers/:providerId/reviews", reviews);
+app.use("/api/reviews", reviewsAdmin);
 
 const PORT = process.env.PORT || 5000;
 
