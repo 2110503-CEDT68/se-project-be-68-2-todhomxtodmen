@@ -16,6 +16,14 @@ const ProviderSchema = new mongoose.Schema(
     telephone: {
       type: String,
     },
+    avgRating: {
+      type: Number,
+      default: 0,
+    },
+    reviewCount: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     toJSON: { virtuals: true },
@@ -23,12 +31,11 @@ const ProviderSchema = new mongoose.Schema(
   },
 );
 
-//Reverse populate with virtuals
 ProviderSchema.virtual("rentals", {
   ref: "Rental",
   localField: "_id",
   foreignField: "provider",
-  justone: false,
+  justOne: false,
 });
 
 ProviderSchema.virtual("cars", {

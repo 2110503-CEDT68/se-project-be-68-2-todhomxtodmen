@@ -51,4 +51,9 @@ const RentalSchema = new mongoose.Schema({
   },
 });
 
+// Indexes for common query patterns
+RentalSchema.index({ user: 1, returnDate: 1 });                              // getRentals, rental limit count, auto-expire
+RentalSchema.index({ provider: 1 });                                         // provider detail bookings fetch
+RentalSchema.index({ car: 1, paymentStatus: 1, rentalDate: 1, returnDate: 1 }); // overlap conflict check
+
 module.exports = mongoose.model("Rental", RentalSchema);

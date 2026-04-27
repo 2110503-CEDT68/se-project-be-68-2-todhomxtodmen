@@ -1,6 +1,7 @@
 const Rental = require("../models/Rental");
 const Provider = require("../models/Provider");
 const Car = require("../models/Car");
+const Notification = require("../models/Notification");
 
 const CAR_SELECT =
   "brand model year color licensePlate dailyRate available image";
@@ -51,6 +52,32 @@ exports.isOwnerOrAdmin = isOwnerOrAdmin;
 //@access Private
 exports.getRentals = async (req, res) => {
   try {
+    // Auto-expire pending rentals whose pickup date has passed
+    if (req.user.role !== "admin") {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const expired = await Rental.find({
+        user: req.user.id,
+        paymentStatus: "pending",
+        rentalDate: { $lt: startOfToday },
+      }).populate({ path: "car", select: "brand model licensePlate" });
+      if (expired.length > 0) {
+        await Promise.all(
+          expired.map((rental) => {
+            const carLabel = rental.car
+              ? `${rental.car.brand} ${rental.car.model} (${rental.car.licensePlate})`
+              : "your car";
+            return Notification.create({
+              user: rental.user,
+              rental: rental._id,
+              message: `Your ${carLabel} booking on ${rental.rentalDate.toISOString().split("T")[0]} was automatically cancelled as payment was not completed before the pickup date.`,
+            });
+          }),
+        );
+        await Rental.deleteMany({ _id: { $in: expired.map((r) => r._id) } });
+      }
+    }
+
     let baseQuery;
     if (req.user.role !== "admin") {
       baseQuery = Rental.find({ user: req.user.id });
@@ -80,6 +107,15 @@ exports.getRental = async (req, res) => {
         message: `No rental with the id of ${req.params.id}`,
       });
     }
+
+    const ownerId =
+      typeof rental.user === "object"
+        ? rental.user._id.toString()
+        : rental.user.toString();
+    if (ownerId !== req.user.id && req.user.role !== "admin") {
+      return res.status(403).json({ success: false, message: "Not authorized" });
+    }
+
     res.status(200).json({ success: true, data: rental });
   } catch (err) {
     console.error(err.stack);
@@ -146,7 +182,12 @@ exports.addRental = async (req, res) => {
     }
 
     if (req.user.role !== "admin") {
-      const existingCount = await Rental.countDocuments({ user: req.user.id });
+      const existingCount = await Rental.countDocuments({
+        user: req.user.id,
+        returnDate: { $gt: new Date() },
+        paymentStatus: { $ne: "refunded" },
+        refundStatus: "none",
+      });
       if (existingCount >= 3) {
         return res.status(400).json({
           success: false,
