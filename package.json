@@ -15,7 +15,8 @@
   "type": "commonjs",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "jest --coverage --testPathPatterns='tests'",
+    "test:watch": "jest --watch",
     "dev": "nodemon server.js",
     "start": "node server.js"
   },
@@ -37,6 +38,15 @@
     "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "jest": "^30.3.0",
+    "nodemon": "^3.1.14",
+    "supertest": "^7.2.2"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "collectCoverageFrom": [
+      "controllers/payments.js",
+      "controllers/reviews.js"
+    ]
   }
 }
